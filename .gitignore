@@ -1,0 +1,13 @@
+.venv/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.pytest_cache/
+.mypy_cache/
+
+# PyInstaller intermediate files
+*.toc
+*.pkg
