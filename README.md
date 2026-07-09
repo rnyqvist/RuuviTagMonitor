@@ -2,6 +2,16 @@
 
 Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements and showing live sensor values.
 
+![RuuviTag Monitor screenshot](docs/ruuvitag-monitor.png)
+
+## Hardware Requirements
+
+- Windows PC with a Bluetooth adapter that supports Bluetooth Low Energy (BLE).
+- BLE advertisement scanning support is required; pairing the RuuviTags is not needed.
+- RuuviTags must be awake, broadcasting, and within Bluetooth range of the PC.
+- Use the vendor Bluetooth driver when possible. On the development PC, the Realtek Bluetooth driver was required for reliable RuuviTag packet reception.
+- If scans show no tags, check Windows Bluetooth is enabled, the Bluetooth Support Service is running, and no driver/device error is shown in Device Manager.
+
 ## Run
 
 ```powershell
