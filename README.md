@@ -1,6 +1,6 @@
 # RuuviTag Monitor
 
-Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements and showing live sensor values.
+Python/Tkinter MS Windows desktop app for discovering nearby RuuviTag BLE advertisements and showing live sensor values.
 
 ![RuuviTag Monitor screenshot](docs/ruuvitag-monitor.jpg)
 
