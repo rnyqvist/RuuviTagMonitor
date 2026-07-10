@@ -13,6 +13,9 @@ Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements an
 - Start, stop, and clear commands are exposed in the toolbar.
 - Sensor card names are editable and persist by MAC address in `%LOCALAPPDATA%\RuuviTagMonitor\tag-names.json`.
 - The app window automatically resizes around the detected sensor count, bounded by the active display work area.
+- Each tag can independently log readings to its own CSV file at a configurable capture interval.
+- Data collection settings persist by MAC address in `%LOCALAPPDATA%\RuuviTagMonitor\data-collection.json`; CSV files use the user-defined tag name and capture-start date and are stored in the adjacent `data` folder.
+- A capture session keeps its initial filename across app restarts. Disabling and re-enabling collection starts a new file, with a numeric suffix when the same tag name and date already exist.
 
 ## Build And Run
 
@@ -27,7 +30,7 @@ Install dependencies with `.\.venv\Scripts\python.exe -m pip install -r requirem
 
 Use `.\build_exe.ps1` to build a PyInstaller executable at `dist\RuuviTagMonitor.exe`.
 
-- Last verified PyInstaller build size: about 13.8 MB.
+- Last verified PyInstaller build size: about 14.5 MB.
 - Verified launch path: `C:\Coding\RuuviTagMonitor\dist\RuuviTagMonitor.exe`.
 
 ## Notes
@@ -35,4 +38,4 @@ Use `.\build_exe.ps1` to build a PyInstaller executable at `dist\RuuviTagMonitor
 - The local PC Bluetooth adapter was confirmed to receive RuuviTag packets after installing the Realtek Bluetooth driver.
 - This project is intentionally Python-first for smaller/familiar local build-and-run loops.
 - Previous WinUI/.NET implementation files were removed; the repository now contains only the Python app path.
-- Future useful steps: add simple history charts, CSV export, and alert thresholds.
+- Future useful steps: add simple history charts and alert thresholds.
