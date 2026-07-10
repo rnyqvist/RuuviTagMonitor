@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import math
 import os
 import queue
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,7 +23,7 @@ except ImportError:  # pragma: no cover - handled at runtime in the GUI
 APP_NAME = "RuuviTag Monitor"
 RUUVI_COMPANY_ID = 0x0499
 CARD_WIDTH = 360
-CARD_HEIGHT = 334
+CARD_HEIGHT = 382
 CARD_GAP = 12
 WINDOW_CHROME_X = 56
 WINDOW_CHROME_Y = 128
@@ -89,6 +91,18 @@ def settings_path() -> Path:
     return Path.home() / "AppData" / "Local" / "RuuviTagMonitor" / "tag-names.json"
 
 
+def app_data_path() -> Path:
+    return settings_path().parent
+
+
+def logging_settings_path() -> Path:
+    return app_data_path() / "data-collection.json"
+
+
+def data_directory() -> Path:
+    return app_data_path() / "data"
+
+
 def load_tag_names() -> dict[str, str]:
     path = settings_path()
     if not path.exists():
@@ -104,6 +118,117 @@ def save_tag_names(names: dict[str, str]) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(names, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def load_logging_settings() -> dict[str, dict[str, object]]:
+    path = logging_settings_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    settings: dict[str, dict[str, object]] = {}
+    if not isinstance(data, dict):
+        return settings
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        try:
+            interval = max(1, int(value.get("interval_seconds", 60)))
+        except (TypeError, ValueError):
+            interval = 60
+        config: dict[str, object] = {
+            "enabled": bool(value.get("enabled", False)),
+            "interval_seconds": interval,
+        }
+        file_name = value.get("file_name")
+        capture_started_at = value.get("capture_started_at")
+        if (
+            isinstance(file_name, str)
+            and Path(file_name).name == file_name
+            and file_name.lower().endswith(".csv")
+        ):
+            config["file_name"] = file_name
+        if isinstance(capture_started_at, str):
+            config["capture_started_at"] = capture_started_at
+        settings[str(key).upper()] = config
+    return settings
+
+
+def save_logging_settings(settings: dict[str, dict[str, object]]) -> None:
+    path = logging_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+
+
+CSV_FIELDS = (
+    "timestamp",
+    "mac_address",
+    "name",
+    "temperature_c",
+    "humidity_percent",
+    "pressure_hpa",
+    "acceleration_g",
+    "battery_mv",
+    "tx_power_dbm",
+    "movement_counter",
+    "measurement_sequence",
+    "rssi_dbm",
+)
+
+
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+
+
+def safe_file_stem(display_name: str) -> str:
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", display_name.strip())
+    stem = re.sub(r"\s+", " ", stem).rstrip(" .")
+    if not stem:
+        stem = "RuuviTag"
+    if stem.upper() in WINDOWS_RESERVED_NAMES:
+        stem = f"{stem}_tag"
+    return stem[:100].rstrip(" .")
+
+
+def capture_file_name(display_name: str, capture_started_at: datetime, sequence: int = 1) -> str:
+    base = f"{safe_file_stem(display_name)}_{capture_started_at:%Y-%m-%d}"
+    suffix = "" if sequence == 1 else f"_{sequence}"
+    return f"{base}{suffix}.csv"
+
+
+def append_reading_csv(reading: RuuviReading, display_name: str, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists() or path.stat().st_size == 0
+    with path.open("a", encoding="utf-8", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+        if is_new:
+            writer.writeheader()
+        writer.writerow(
+            {
+                "timestamp": reading.last_seen.astimezone().isoformat(timespec="seconds"),
+                "mac_address": reading.mac_address,
+                "name": display_name,
+                "temperature_c": f"{reading.temperature_c:.3f}",
+                "humidity_percent": f"{reading.humidity_percent:.4f}",
+                "pressure_hpa": f"{reading.pressure_hpa:.2f}",
+                "acceleration_g": f"{reading.acceleration_g:.4f}",
+                "battery_mv": reading.battery_mv,
+                "tx_power_dbm": reading.tx_power_dbm,
+                "movement_counter": reading.movement_counter,
+                "measurement_sequence": reading.measurement_sequence,
+                "rssi_dbm": reading.rssi,
+            }
+        )
+    return path
 
 
 def read_i16(data: bytes, offset: int) -> int:
@@ -222,6 +347,9 @@ class SensorCard(ttk.Frame):
         self.movement_var = tk.StringVar()
         self.sequence_var = tk.StringVar()
         self.last_seen_var = tk.StringVar()
+        logging_config = app.logging_config_for(self.mac_address)
+        self.collect_var = tk.BooleanVar(value=bool(logging_config["enabled"]))
+        self.interval_var = tk.StringVar(value=str(logging_config["interval_seconds"]))
 
         self.configure(width=CARD_WIDTH, height=CARD_HEIGHT)
         self.grid_propagate(False)
@@ -251,6 +379,21 @@ class SensorCard(ttk.Frame):
         self._metric("Sequence", self.sequence_var, 6, 1, "SmallValue.TLabel")
         self._metric("Last seen", self.last_seen_var, 6, 2, "SmallValue.TLabel")
 
+        logging_row = ttk.Frame(self, style="MetricGroup.TFrame")
+        logging_row.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        ttk.Checkbutton(
+            logging_row,
+            text="Collect CSV data",
+            variable=self.collect_var,
+            command=self._save_logging_config,
+        ).pack(side="left")
+        ttk.Label(logging_row, text="Every", style="Muted.TLabel").pack(side="left", padx=(16, 5))
+        interval = ttk.Spinbox(logging_row, from_=1, to=86400, width=7, textvariable=self.interval_var)
+        interval.pack(side="left")
+        interval.bind("<Return>", self._save_logging_config)
+        interval.bind("<FocusOut>", self._save_logging_config)
+        ttk.Label(logging_row, text="seconds", style="Muted.TLabel").pack(side="left", padx=(5, 0))
+
     def _metric(self, label: str, variable: tk.StringVar, row: int, column: int, value_style: str) -> None:
         frame = ttk.Frame(self, style="MetricGroup.TFrame")
         frame.grid(row=row, column=column, sticky="nw", pady=(0, 16), padx=(0, 10))
@@ -259,6 +402,15 @@ class SensorCard(ttk.Frame):
 
     def _save_name(self, _event=None) -> None:
         self.app.save_display_name(self.mac_address, self.name_var.get())
+
+    def _save_logging_config(self, _event=None) -> None:
+        try:
+            interval = int(self.interval_var.get())
+        except ValueError:
+            interval = 60
+        interval = min(86400, max(1, interval))
+        self.interval_var.set(str(interval))
+        self.app.save_logging_config(self.mac_address, self.collect_var.get(), interval)
 
     def update_reading(self, reading: RuuviReading) -> None:
         if self.mac_address not in self.app.tag_names:
@@ -284,6 +436,8 @@ class RuuviTagMonitorApp(tk.Tk):
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.scanner = BleScannerWorker(self.event_queue)
         self.tag_names = load_tag_names()
+        self.logging_settings = load_logging_settings()
+        self.last_csv_capture: dict[str, datetime] = {}
         self.cards: dict[str, SensorCard] = {}
         self.readings: dict[str, RuuviReading] = {}
         self.scanning = False
@@ -339,6 +493,7 @@ class RuuviTagMonitorApp(tk.Tk):
         self.stop_button = ttk.Button(button_area, text="Stop", command=self.stop_scan, state="disabled")
         self.stop_button.pack(side="left", padx=(0, 8))
         ttk.Button(button_area, text="Clear", command=self.clear_tags).pack(side="left")
+        ttk.Button(button_area, text="Open data folder", command=self.open_data_folder).pack(side="left", padx=(8, 0))
 
         self.cards_frame = ttk.Frame(root, style="Cards.TFrame")
         self.cards_frame.pack(fill="both", expand=True, pady=(22, 0))
@@ -369,6 +524,7 @@ class RuuviTagMonitorApp(tk.Tk):
             card.destroy()
         self.cards.clear()
         self.readings.clear()
+        self.last_csv_capture.clear()
         self._layout_cards()
         self.status_var.set("Cleared current sensor list.")
 
@@ -388,6 +544,83 @@ class RuuviTagMonitorApp(tk.Tk):
                 self.cards[mac_address].name_var.set(reading.default_name)
             self.status_var.set(f"Reset name for {mac_address}.")
         save_tag_names(self.tag_names)
+
+    def logging_config_for(self, mac_address: str) -> dict[str, object]:
+        return self.logging_settings.get(
+            mac_address.upper(),
+            {"enabled": False, "interval_seconds": 60},
+        )
+
+    def save_logging_config(self, mac_address: str, enabled: bool, interval_seconds: int) -> None:
+        key = mac_address.upper()
+        previous_config = self.logging_config_for(key)
+        was_enabled = bool(previous_config["enabled"])
+        config: dict[str, object] = {
+            "enabled": enabled,
+            "interval_seconds": interval_seconds,
+        }
+        if enabled and was_enabled:
+            for setting in ("file_name", "capture_started_at"):
+                if setting in previous_config:
+                    config[setting] = previous_config[setting]
+        self.logging_settings[key] = config
+        save_logging_settings(self.logging_settings)
+        if enabled and not was_enabled:
+            self.last_csv_capture.pop(mac_address, None)
+            reading = self.readings.get(mac_address)
+            if reading:
+                self._capture_reading_if_due(reading)
+        state = "enabled" if enabled else "disabled"
+        file_name = self.logging_config_for(key).get("file_name")
+        destination = f" to {file_name}" if enabled and file_name else ""
+        self.status_var.set(
+            f"CSV collection {state} for {mac_address}{destination} (every {interval_seconds} seconds)."
+        )
+
+    def open_data_folder(self) -> None:
+        path = data_directory()
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not open the data folder:\n{exc}")
+
+    def _capture_reading_if_due(self, reading: RuuviReading) -> None:
+        config = self.logging_config_for(reading.mac_address)
+        if not config["enabled"]:
+            return
+        if "file_name" not in config:
+            self._start_capture_file(reading, config)
+        interval_seconds = int(config["interval_seconds"])
+        previous = self.last_csv_capture.get(reading.mac_address)
+        if previous and (reading.last_seen - previous).total_seconds() < interval_seconds:
+            return
+        try:
+            path = data_directory() / str(config["file_name"])
+            append_reading_csv(reading, self.display_name_for(reading), path)
+        except OSError as exc:
+            self.status_var.set(f"Could not write CSV data for {reading.mac_address}: {exc}")
+            return
+        self.last_csv_capture[reading.mac_address] = reading.last_seen
+
+    def _start_capture_file(self, reading: RuuviReading, config: dict[str, object]) -> None:
+        display_name = self.display_name_for(reading)
+        assigned_names = {
+            str(item["file_name"]).lower()
+            for item in self.logging_settings.values()
+            if item is not config and "file_name" in item
+        }
+        sequence = 1
+        while True:
+            file_name = capture_file_name(display_name, reading.last_seen, sequence)
+            path = data_directory() / file_name
+            if file_name.lower() not in assigned_names and not path.exists():
+                break
+            sequence += 1
+        config["file_name"] = file_name
+        config["capture_started_at"] = reading.last_seen.astimezone().isoformat(timespec="seconds")
+        self.logging_settings[reading.mac_address.upper()] = config
+        save_logging_settings(self.logging_settings)
 
     def _drain_events(self) -> None:
         while True:
@@ -418,6 +651,7 @@ class RuuviTagMonitorApp(tk.Tk):
 
     def _upsert_reading(self, reading: RuuviReading) -> None:
         self.readings[reading.mac_address] = reading
+        self._capture_reading_if_due(reading)
         card = self.cards.get(reading.mac_address)
         new_card = card is None
         if card is None:
