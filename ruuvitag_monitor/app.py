@@ -27,8 +27,8 @@ CARD_HEIGHT = 382
 CARD_GAP = 12
 WINDOW_CHROME_X = 56
 WINDOW_CHROME_Y = 128
-EMPTY_SIZE = (680, 400)
-MIN_SIZE = (500, 400)
+EMPTY_SIZE = (800, 400)
+MIN_SIZE = (760, 400)
 MAX_COLUMNS = 3
 
 
@@ -82,6 +82,14 @@ class RuuviReading:
     @property
     def last_seen_text(self) -> str:
         return self.last_seen.strftime("%H.%M.%S")
+
+
+@dataclass
+class TemperatureSeries:
+    mac_address: str
+    display_name: str
+    timestamps: list[datetime]
+    temperatures_c: list[float]
 
 
 def settings_path() -> Path:
@@ -229,6 +237,42 @@ def append_reading_csv(reading: RuuviReading, display_name: str, path: Path) -> 
             }
         )
     return path
+
+
+def load_temperature_history(path: Path) -> list[TemperatureSeries]:
+    points_by_tag: dict[str, list[tuple[datetime, float, str]]] = {}
+    if not path.exists():
+        return []
+
+    for csv_path in sorted(path.glob("*.csv")):
+        try:
+            with csv_path.open(encoding="utf-8-sig", newline="") as csv_file:
+                for row in csv.DictReader(csv_file):
+                    try:
+                        timestamp = datetime.fromisoformat(row.get("timestamp", ""))
+                        temperature = float(row.get("temperature_c", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(temperature):
+                        continue
+                    mac_address = (row.get("mac_address") or csv_path.stem).strip().upper()
+                    display_name = (row.get("name") or mac_address).strip()
+                    points_by_tag.setdefault(mac_address, []).append((timestamp, temperature, display_name))
+        except (OSError, csv.Error, UnicodeError):
+            continue
+
+    series: list[TemperatureSeries] = []
+    for mac_address, points in points_by_tag.items():
+        points.sort(key=lambda point: point[0].timestamp())
+        series.append(
+            TemperatureSeries(
+                mac_address=mac_address,
+                display_name=points[-1][2],
+                timestamps=[point[0] for point in points],
+                temperatures_c=[point[1] for point in points],
+            )
+        )
+    return sorted(series, key=lambda item: item.display_name.casefold())
 
 
 def read_i16(data: bytes, offset: int) -> int:
@@ -493,6 +537,9 @@ class RuuviTagMonitorApp(tk.Tk):
         self.stop_button = ttk.Button(button_area, text="Stop", command=self.stop_scan, state="disabled")
         self.stop_button.pack(side="left", padx=(0, 8))
         ttk.Button(button_area, text="Clear", command=self.clear_tags).pack(side="left")
+        ttk.Button(button_area, text="Generate temperature graphs", command=self.show_temperature_graphs).pack(
+            side="left", padx=(8, 0)
+        )
         ttk.Button(button_area, text="Open data folder", command=self.open_data_folder).pack(side="left", padx=(8, 0))
 
         self.cards_frame = ttk.Frame(root, style="Cards.TFrame")
@@ -584,6 +631,80 @@ class RuuviTagMonitorApp(tk.Tk):
             os.startfile(path)  # type: ignore[attr-defined]
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Could not open the data folder:\n{exc}")
+
+    def show_temperature_graphs(self) -> None:
+        series = load_temperature_history(data_directory())
+        if not series:
+            messagebox.showinfo(
+                APP_NAME,
+                "No valid temperature readings were found in the data folder.",
+                parent=self,
+            )
+            return
+
+        try:
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+            from matplotlib.figure import Figure
+        except ImportError:
+            messagebox.showerror(
+                APP_NAME,
+                "Temperature graphs require matplotlib. Run: pip install -r requirements.txt",
+                parent=self,
+            )
+            return
+
+        window = tk.Toplevel(self)
+        window.title("RuuviTag Temperature Graphs")
+        window.configure(bg="#f3f6f1")
+        window.minsize(700, 500)
+        width = min(1100, self.winfo_screenwidth() - 100)
+        height = min(850, self.winfo_screenheight() - 100)
+        window.geometry(f"{width}x{height}")
+
+        container = ttk.Frame(window, style="Root.TFrame", padding=(16, 16, 16, 8))
+        container.pack(fill="both", expand=True)
+        chart_area = tk.Canvas(container, background="#ffffff", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=chart_area.yview)
+        chart_area.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        chart_area.pack(side="left", fill="both", expand=True)
+
+        charts = ttk.Frame(chart_area)
+        chart_window = chart_area.create_window((0, 0), window=charts, anchor="nw")
+        charts.bind("<Configure>", lambda _event: chart_area.configure(scrollregion=chart_area.bbox("all")))
+        chart_area.bind("<Configure>", lambda event: chart_area.itemconfigure(chart_window, width=event.width))
+
+        figures: list[Figure] = []
+        for item in series:
+            figure = Figure(figsize=(9.5, 2.8), dpi=100, facecolor="#ffffff")
+            axis = figure.add_subplot(111)
+            axis.plot(item.timestamps, item.temperatures_c, color="#337b2f", linewidth=2)
+            axis.set_title(f"{item.display_name}  ({item.mac_address})", loc="left", fontsize=11, fontweight="bold")
+            axis.set_ylabel("Temperature (°C)")
+            axis.set_xlabel("Time")
+            axis.grid(True, color="#dfe5dc", linewidth=0.8)
+            locator = AutoDateLocator()
+            axis.xaxis.set_major_locator(locator)
+            axis.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+            figure.tight_layout(pad=1.2)
+            figure_canvas = FigureCanvasTkAgg(figure, master=charts)
+            figure_canvas.draw()
+            figure_canvas.get_tk_widget().pack(fill="x", expand=True, pady=(0, 12))
+            figures.append(figure)
+
+        footer = ttk.Frame(window, style="Root.TFrame", padding=(16, 8, 16, 16))
+        footer.pack(fill="x")
+
+        def close_window() -> None:
+            for figure in figures:
+                figure.clear()
+            window.destroy()
+
+        ttk.Button(footer, text="Close", command=close_window).pack(side="right")
+        window.protocol("WM_DELETE_WINDOW", close_window)
+        window.transient(self)
+        window.focus_set()
 
     def _capture_reading_if_due(self, reading: RuuviReading) -> None:
         config = self.logging_config_for(reading.mac_address)

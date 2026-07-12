@@ -16,6 +16,8 @@ Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements an
 - Each tag can independently log readings to its own CSV file at a configurable capture interval.
 - Data collection settings persist by MAC address in `%LOCALAPPDATA%\RuuviTagMonitor\data-collection.json`; CSV files use the user-defined tag name and capture-start date and are stored in the adjacent `data` folder.
 - A capture session keeps its initial filename across app restarts. Disabling and re-enabling collection starts a new file, with a numeric suffix when the same tag name and date already exist.
+- The Generate temperature graphs command combines valid CSV readings by MAC address and opens a scrollable window containing one temperature-over-time graph per tag.
+- README screenshots are stored at `docs\ruuvitag-monitor.png` for the live monitor and `docs\ruuvitag-temperature-graphs.png` for the graph window.
 
 ## Build And Run
 
@@ -30,7 +32,7 @@ Install dependencies with `.\.venv\Scripts\python.exe -m pip install -r requirem
 
 Use `.\build_exe.ps1` to build a PyInstaller executable at `dist\RuuviTagMonitor.exe`.
 
-- Last verified PyInstaller build size: about 14.5 MB.
+- Last verified PyInstaller build size: about 42.2 MB (includes Matplotlib and its plotting dependencies).
 - Verified launch path: `C:\Coding\RuuviTagMonitor\dist\RuuviTagMonitor.exe`.
 
 ## Notes
@@ -38,4 +40,4 @@ Use `.\build_exe.ps1` to build a PyInstaller executable at `dist\RuuviTagMonitor
 - The local PC Bluetooth adapter was confirmed to receive RuuviTag packets after installing the Realtek Bluetooth driver.
 - This project is intentionally Python-first for smaller/familiar local build-and-run loops.
 - Previous WinUI/.NET implementation files were removed; the repository now contains only the Python app path.
-- Future useful steps: add simple history charts and alert thresholds.
+- Future useful step: add alert thresholds.

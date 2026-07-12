@@ -4,6 +4,8 @@ Python/Tkinter MS Windows desktop app for discovering nearby RuuviTag BLE advert
 
 ![RuuviTag Monitor screenshot](docs/ruuvitag-monitor.png)
 
+*Live BLE readings with independent CSV collection controls for each discovered tag.*
+
 ## Hardware Requirements
 
 - Windows PC with a Bluetooth adapter that supports Bluetooth Low Energy (BLE).
@@ -39,6 +41,7 @@ python -m venv .venv
 - Set each tag's capture interval from 1 to 86,400 seconds; collection settings persist between runs.
 - Name each CSV from the user-defined tag name and capture-start date, such as `Kitchen_2026-07-10.csv`.
 - Store the CSV files under `%LOCALAPPDATA%\RuuviTagMonitor\data`.
+- Generate scrollable temperature-over-time graphs for every tag represented in the data folder.
 
 ## CSV Data Collection
 
@@ -50,6 +53,14 @@ python -m venv .venv
 Each collection session keeps the tag name it had when capture began. The filename combines that name with the start date, for example `Sauna_2026-07-10.csv`. Starting another same-name session on the same date adds a numeric suffix, such as `Sauna_2026-07-10_2.csv`.
 
 Each row contains the timestamp, MAC address, tag name, temperature, humidity, pressure, acceleration, battery voltage, TX power, movement counter, measurement sequence, and RSSI. Collection choices and intervals are restored when the application starts again.
+
+## Temperature Graphs
+
+Select **Generate temperature graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown in a new scrollable window with one temperature-over-time graph per tag. Select **Close** to close the graph window.
+
+![RuuviTag temperature graphs](docs/ruuvitag-temperature-graphs.png)
+
+*Temperature history generated from the available CSV data for each tag.*
 
 ## Shortcuts
 

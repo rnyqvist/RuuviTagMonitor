@@ -1,1 +1,2 @@
 bleak>=1.0.1
+matplotlib>=3.10.0
