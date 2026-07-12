@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ruuvitag_monitor.app import CSV_FIELDS, load_temperature_history
+from ruuvitag_monitor.app import CSV_FIELDS, graph_window_layout, load_temperature_history
 
 
 class TemperatureHistoryTests(unittest.TestCase):
@@ -59,6 +59,14 @@ class TemperatureHistoryTests(unittest.TestCase):
 
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].temperatures_c, [21.25])
+
+    def test_graph_window_scales_to_tag_count(self) -> None:
+        self.assertEqual(graph_window_layout(1, 1920, 1080), (1100, 500, 330))
+        self.assertEqual(graph_window_layout(2, 1920, 1080), (1100, 664, 280))
+        self.assertEqual(graph_window_layout(3, 1920, 1080), (1100, 836, 240))
+
+    def test_many_graphs_are_bounded_by_screen_height(self) -> None:
+        self.assertEqual(graph_window_layout(5, 1920, 1080), (1100, 1000, 240))
 
     def _write_csv(self, file_name: str, rows: list[dict[str, object]]) -> None:
         with (self.data_dir / file_name).open("w", encoding="utf-8", newline="") as csv_file:

@@ -275,6 +275,14 @@ def load_temperature_history(path: Path) -> list[TemperatureSeries]:
     return sorted(series, key=lambda item: item.display_name.casefold())
 
 
+def graph_window_layout(tag_count: int, screen_width: int, screen_height: int) -> tuple[int, int, int]:
+    chart_height = max(240, 380 - (50 * tag_count))
+    desired_height = 80 + tag_count * (chart_height + 12)
+    available_height = max(500, screen_height - 80)
+    width = min(1100, max(700, screen_width - 100))
+    return width, max(500, min(desired_height, available_height)), chart_height
+
+
 def read_i16(data: bytes, offset: int) -> int:
     value = (data[offset] << 8) | data[offset + 1]
     return value - 0x10000 if value & 0x8000 else value
@@ -658,26 +666,45 @@ class RuuviTagMonitorApp(tk.Tk):
         window.title("RuuviTag Temperature Graphs")
         window.configure(bg="#f3f6f1")
         window.minsize(700, 500)
-        width = min(1100, self.winfo_screenwidth() - 100)
-        height = min(850, self.winfo_screenheight() - 100)
+        width, height, chart_height = graph_window_layout(
+            len(series), self.winfo_screenwidth(), self.winfo_screenheight()
+        )
         window.geometry(f"{width}x{height}")
 
         container = ttk.Frame(window, style="Root.TFrame", padding=(16, 16, 16, 8))
         container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
         chart_area = tk.Canvas(container, background="#ffffff", highlightthickness=0)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=chart_area.yview)
         chart_area.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        chart_area.pack(side="left", fill="both", expand=True)
+        chart_area.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
 
         charts = ttk.Frame(chart_area)
         chart_window = chart_area.create_window((0, 0), window=charts, anchor="nw")
-        charts.bind("<Configure>", lambda _event: chart_area.configure(scrollregion=chart_area.bbox("all")))
-        chart_area.bind("<Configure>", lambda event: chart_area.itemconfigure(chart_window, width=event.width))
+
+        def update_scrollbar() -> None:
+            bounds = chart_area.bbox("all")
+            chart_area.configure(scrollregion=bounds)
+            if bounds and bounds[3] > chart_area.winfo_height():
+                scrollbar.grid()
+            else:
+                scrollbar.grid_remove()
+
+        def charts_resized(_event=None) -> None:
+            chart_area.after_idle(update_scrollbar)
+
+        def viewport_resized(event) -> None:
+            chart_area.itemconfigure(chart_window, width=event.width)
+            chart_area.after_idle(update_scrollbar)
+
+        charts.bind("<Configure>", charts_resized)
+        chart_area.bind("<Configure>", viewport_resized)
 
         figures: list[Figure] = []
         for item in series:
-            figure = Figure(figsize=(9.5, 2.8), dpi=100, facecolor="#ffffff")
+            figure = Figure(figsize=(9.5, chart_height / 100), dpi=100, facecolor="#ffffff")
             axis = figure.add_subplot(111)
             axis.plot(item.timestamps, item.temperatures_c, color="#337b2f", linewidth=2)
             axis.set_title(f"{item.display_name}  ({item.mac_address})", loc="left", fontsize=11, fontweight="bold")

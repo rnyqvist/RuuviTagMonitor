@@ -56,7 +56,7 @@ Each row contains the timestamp, MAC address, tag name, temperature, humidity, p
 
 ## Temperature Graphs
 
-Select **Generate temperature graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown in a new scrollable window with one temperature-over-time graph per tag. Select **Close** to close the graph window.
+Select **Generate temperature graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown in a window that sizes its height and chart panels to the tag count. The available vertical space is used for the graphs, and a scrollbar appears only when the content exceeds the window. Select **Close** to close the graph window.
 
 ![RuuviTag temperature graphs](docs/ruuvitag-temperature-graphs.png)
 
