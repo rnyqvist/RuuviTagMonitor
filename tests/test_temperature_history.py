@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ruuvitag_monitor.app import CSV_FIELDS, graph_window_layout, load_temperature_history
+from ruuvitag_monitor.app import CSV_FIELDS, graph_window_layout, load_environment_history
 
 
 class TemperatureHistoryTests(unittest.TestCase):
@@ -17,18 +17,19 @@ class TemperatureHistoryTests(unittest.TestCase):
     def test_combines_capture_files_by_mac_and_sorts_by_time(self) -> None:
         self._write_csv(
             "Kitchen_2.csv",
-            [self._row("2026-07-12T12:00:00+03:00", "22.5", "AA:BB:CC:DD:EE:01", "Kitchen")],
+            [self._row("2026-07-12T12:00:00+03:00", "22.5", "AA:BB:CC:DD:EE:01", "Kitchen", "1002.5")],
         )
         self._write_csv(
             "Kitchen_1.csv",
-            [self._row("2026-07-12T10:00:00+03:00", "20.5", "AA:BB:CC:DD:EE:01", "Kitchen")],
+            [self._row("2026-07-12T10:00:00+03:00", "20.5", "AA:BB:CC:DD:EE:01", "Kitchen", "998.5")],
         )
 
-        history = load_temperature_history(self.data_dir)
+        history = load_environment_history(self.data_dir)
 
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].display_name, "Kitchen")
         self.assertEqual(history[0].temperatures_c, [20.5, 22.5])
+        self.assertEqual(history[0].pressures_hpa, [998.5, 1002.5])
         self.assertEqual([timestamp.hour for timestamp in history[0].timestamps], [10, 12])
 
     def test_returns_a_separate_series_for_each_tag(self) -> None:
@@ -40,7 +41,7 @@ class TemperatureHistoryTests(unittest.TestCase):
             ],
         )
 
-        history = load_temperature_history(self.data_dir)
+        history = load_environment_history(self.data_dir)
 
         self.assertEqual([item.display_name for item in history], ["Kitchen", "Sauna"])
 
@@ -55,7 +56,7 @@ class TemperatureHistoryTests(unittest.TestCase):
         )
         (self.data_dir / "broken.csv").write_bytes(b"\xff\xfe\x00")
 
-        history = load_temperature_history(self.data_dir)
+        history = load_environment_history(self.data_dir)
 
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].temperatures_c, [21.25])
@@ -75,14 +76,20 @@ class TemperatureHistoryTests(unittest.TestCase):
             writer.writerows(rows)
 
     @staticmethod
-    def _row(timestamp: str, temperature: str, mac_address: str, name: str) -> dict[str, object]:
+    def _row(
+        timestamp: str,
+        temperature: str,
+        mac_address: str,
+        name: str,
+        pressure: str = "1000",
+    ) -> dict[str, object]:
         return {
             "timestamp": timestamp,
             "mac_address": mac_address,
             "name": name,
             "temperature_c": temperature,
             "humidity_percent": "45",
-            "pressure_hpa": "1000",
+            "pressure_hpa": pressure,
             "acceleration_g": "1",
             "battery_mv": "2900",
             "tx_power_dbm": "4",

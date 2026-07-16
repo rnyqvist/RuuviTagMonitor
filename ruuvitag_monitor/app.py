@@ -85,11 +85,12 @@ class RuuviReading:
 
 
 @dataclass
-class TemperatureSeries:
+class EnvironmentalSeries:
     mac_address: str
     display_name: str
     timestamps: list[datetime]
     temperatures_c: list[float]
+    pressures_hpa: list[float]
 
 
 def settings_path() -> Path:
@@ -239,8 +240,8 @@ def append_reading_csv(reading: RuuviReading, display_name: str, path: Path) -> 
     return path
 
 
-def load_temperature_history(path: Path) -> list[TemperatureSeries]:
-    points_by_tag: dict[str, list[tuple[datetime, float, str]]] = {}
+def load_environment_history(path: Path) -> list[EnvironmentalSeries]:
+    points_by_tag: dict[str, list[tuple[datetime, float, float, str]]] = {}
     if not path.exists():
         return []
 
@@ -251,25 +252,29 @@ def load_temperature_history(path: Path) -> list[TemperatureSeries]:
                     try:
                         timestamp = datetime.fromisoformat(row.get("timestamp", ""))
                         temperature = float(row.get("temperature_c", ""))
+                        pressure = float(row.get("pressure_hpa", ""))
                     except (TypeError, ValueError):
                         continue
-                    if not math.isfinite(temperature):
+                    if not math.isfinite(temperature) or not math.isfinite(pressure):
                         continue
                     mac_address = (row.get("mac_address") or csv_path.stem).strip().upper()
                     display_name = (row.get("name") or mac_address).strip()
-                    points_by_tag.setdefault(mac_address, []).append((timestamp, temperature, display_name))
+                    points_by_tag.setdefault(mac_address, []).append(
+                        (timestamp, temperature, pressure, display_name)
+                    )
         except (OSError, csv.Error, UnicodeError):
             continue
 
-    series: list[TemperatureSeries] = []
+    series: list[EnvironmentalSeries] = []
     for mac_address, points in points_by_tag.items():
         points.sort(key=lambda point: point[0].timestamp())
         series.append(
-            TemperatureSeries(
+            EnvironmentalSeries(
                 mac_address=mac_address,
-                display_name=points[-1][2],
+                display_name=points[-1][3],
                 timestamps=[point[0] for point in points],
                 temperatures_c=[point[1] for point in points],
+                pressures_hpa=[point[2] for point in points],
             )
         )
     return sorted(series, key=lambda item: item.display_name.casefold())
@@ -545,7 +550,7 @@ class RuuviTagMonitorApp(tk.Tk):
         self.stop_button = ttk.Button(button_area, text="Stop", command=self.stop_scan, state="disabled")
         self.stop_button.pack(side="left", padx=(0, 8))
         ttk.Button(button_area, text="Clear", command=self.clear_tags).pack(side="left")
-        ttk.Button(button_area, text="Generate temperature graphs", command=self.show_temperature_graphs).pack(
+        ttk.Button(button_area, text="Generate graphs", command=self.show_environment_graphs).pack(
             side="left", padx=(8, 0)
         )
         ttk.Button(button_area, text="Open data folder", command=self.open_data_folder).pack(side="left", padx=(8, 0))
@@ -640,12 +645,12 @@ class RuuviTagMonitorApp(tk.Tk):
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Could not open the data folder:\n{exc}")
 
-    def show_temperature_graphs(self) -> None:
-        series = load_temperature_history(data_directory())
+    def show_environment_graphs(self) -> None:
+        series = load_environment_history(data_directory())
         if not series:
             messagebox.showinfo(
                 APP_NAME,
-                "No valid temperature readings were found in the data folder.",
+                "No valid temperature and air pressure readings were found in the data folder.",
                 parent=self,
             )
             return
@@ -657,13 +662,13 @@ class RuuviTagMonitorApp(tk.Tk):
         except ImportError:
             messagebox.showerror(
                 APP_NAME,
-                "Temperature graphs require matplotlib. Run: pip install -r requirements.txt",
+                "Graphs require matplotlib. Run: pip install -r requirements.txt",
                 parent=self,
             )
             return
 
         window = tk.Toplevel(self)
-        window.title("RuuviTag Temperature Graphs")
+        window.title("RuuviTag Environmental Graphs")
         window.configure(bg="#f3f6f1")
         window.minsize(700, 500)
         width, height, chart_height = graph_window_layout(
@@ -706,11 +711,29 @@ class RuuviTagMonitorApp(tk.Tk):
         for item in series:
             figure = Figure(figsize=(9.5, chart_height / 100), dpi=100, facecolor="#ffffff")
             axis = figure.add_subplot(111)
-            axis.plot(item.timestamps, item.temperatures_c, color="#337b2f", linewidth=2)
+            pressure_axis = axis.twinx()
+            temperature_line = axis.plot(
+                item.timestamps,
+                item.temperatures_c,
+                color="#337b2f",
+                linewidth=2,
+                label="Temperature",
+            )[0]
+            pressure_line = pressure_axis.plot(
+                item.timestamps,
+                item.pressures_hpa,
+                color="#2774b8",
+                linewidth=2,
+                label="Air pressure",
+            )[0]
             axis.set_title(f"{item.display_name}  ({item.mac_address})", loc="left", fontsize=11, fontweight="bold")
             axis.set_ylabel("Temperature (°C)")
+            pressure_axis.set_ylabel("Air pressure (hPa)")
+            axis.tick_params(axis="y", colors="#337b2f")
+            pressure_axis.tick_params(axis="y", colors="#2774b8")
             axis.set_xlabel("Time")
             axis.grid(True, color="#dfe5dc", linewidth=0.8)
+            axis.legend(handles=[temperature_line, pressure_line], loc="upper left", frameon=False)
             locator = AutoDateLocator()
             axis.xaxis.set_major_locator(locator)
             axis.xaxis.set_major_formatter(ConciseDateFormatter(locator))

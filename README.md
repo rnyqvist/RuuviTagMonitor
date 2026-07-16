@@ -41,7 +41,7 @@ python -m venv .venv
 - Set each tag's capture interval from 1 to 86,400 seconds; collection settings persist between runs.
 - Name each CSV from the user-defined tag name and capture-start date, such as `Kitchen_2026-07-10.csv`.
 - Store the CSV files under `%LOCALAPPDATA%\RuuviTagMonitor\data`.
-- Generate scrollable temperature-over-time graphs for every tag represented in the data folder.
+- Generate scrollable temperature and air-pressure graphs for every tag represented in the data folder.
 
 ## CSV Data Collection
 
@@ -54,13 +54,13 @@ Each collection session keeps the tag name it had when capture began. The filena
 
 Each row contains the timestamp, MAC address, tag name, temperature, humidity, pressure, acceleration, battery voltage, TX power, movement counter, measurement sequence, and RSSI. Collection choices and intervals are restored when the application starts again.
 
-## Temperature Graphs
+## Environmental Graphs
 
-Select **Generate temperature graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown in a window that sizes its height and chart panels to the tag count. The available vertical space is used for the graphs, and a scrollbar appears only when the content exceeds the window. Select **Close** to close the graph window.
+Select **Generate graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown with green temperature and blue air-pressure lines. Separate Y-axes keep both scales readable. The window sizes its height and chart panels to the tag count, and a scrollbar appears only when the content exceeds the available space. Select **Close** to close the graph window.
 
 ![RuuviTag temperature graphs](docs/ruuvitag-temperature-graphs.png)
 
-*Temperature history generated from the available CSV data for each tag.*
+*Temperature and air-pressure history generated from the available CSV data for each tag.*
 
 ## Shortcuts
 
