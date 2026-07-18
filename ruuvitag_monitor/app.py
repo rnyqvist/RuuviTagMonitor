@@ -116,6 +116,7 @@ class WeatherForecast:
     longitude: float
     current: dict[str, object]
     daily: list[dict[str, object]]
+    hourly: list[dict[str, object]]
 
 
 @dataclass
@@ -132,6 +133,29 @@ def weather_description(code: object) -> str:
         return "Unknown conditions"
 
 
+def weather_symbol(code: object) -> str:
+    """Return a compact symbol for an Open-Meteo WMO weather code."""
+    try:
+        value = int(code)
+    except (TypeError, ValueError):
+        return "?"
+    if value == 0:
+        return "☀"
+    if value in (1, 2):
+        return "⛅"
+    if value == 3:
+        return "☁"
+    if value in (45, 48):
+        return "≋"
+    if value in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+        return "☔"
+    if value in (71, 73, 75, 77, 85, 86):
+        return "❄"
+    if value in (95, 96, 99):
+        return "⚡"
+    return "?"
+
+
 def weather_number(value: object, decimals: int = 0, fallback: str = "–") -> str:
     """Format a weather-service number without letting incomplete data break the UI."""
     try:
@@ -141,6 +165,26 @@ def weather_number(value: object, decimals: int = 0, fallback: str = "–") -> s
     if not math.isfinite(number):
         return fallback
     return f"{number:.{decimals}f}"
+
+
+def hourly_forecast_for_day(
+    hourly: list[dict[str, object]], day: datetime, cutoff: datetime | None = None
+) -> list[dict[str, object]]:
+    """Select one local forecast day, optionally starting at the cutoff's full hour."""
+    day_key = day.strftime("%Y-%m-%d")
+    cutoff_hour = cutoff.replace(minute=0, second=0, microsecond=0) if cutoff else None
+    selected = []
+    for hour in hourly:
+        timestamp = str(hour.get("time", ""))
+        if not timestamp.startswith(day_key):
+            continue
+        try:
+            hour_time = datetime.fromisoformat(timestamp)
+        except ValueError:
+            continue
+        if cutoff_hour is None or hour_time >= cutoff_hour:
+            selected.append(hour)
+    return selected
 
 
 def _get_json(url: str) -> dict[str, object]:
@@ -185,23 +229,29 @@ def fetch_local_weather(location: WeatherLocation) -> WeatherForecast:
             "latitude": latitude,
             "longitude": longitude,
             "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,precipitation",
+            "hourly": "temperature_2m,weather_code,precipitation_probability,wind_speed_10m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
             "timezone": "auto",
-            "forecast_days": 7,
+            "forecast_days": 2,
         }
     )
     forecast = _get_json(f"https://api.open-meteo.com/v1/forecast?{params}")
     current = forecast.get("current")
     daily_values = forecast.get("daily")
-    if not isinstance(current, dict) or not isinstance(daily_values, dict):
+    hourly_values = forecast.get("hourly")
+    if not isinstance(current, dict) or not isinstance(daily_values, dict) or not isinstance(hourly_values, dict):
         raise ValueError("The weather service returned incomplete forecast data.")
     dates = daily_values.get("time")
-    if not isinstance(dates, list) or not dates:
+    times = hourly_values.get("time")
+    if not isinstance(dates, list) or len(dates) < 2 or not isinstance(times, list) or not times:
         raise ValueError("The weather service returned incomplete forecast data.")
     daily = []
     for index, date in enumerate(dates):
         daily.append({key: value[index] for key, value in daily_values.items() if isinstance(value, list) and index < len(value)} | {"time": date})
-    return WeatherForecast(location.name, latitude, longitude, current, daily)
+    hourly = []
+    for index, time in enumerate(times):
+        hourly.append({key: value[index] for key, value in hourly_values.items() if isinstance(value, list) and index < len(value)} | {"time": time})
+    return WeatherForecast(location.name, latitude, longitude, current, daily[:2], hourly)
 
 
 def settings_path() -> Path:
@@ -413,11 +463,22 @@ def load_environment_history(path: Path) -> list[EnvironmentalSeries]:
 
 
 def graph_window_layout(tag_count: int, screen_width: int, screen_height: int) -> tuple[int, int, int]:
-    chart_height = max(240, 380 - (50 * tag_count))
-    desired_height = 80 + tag_count * (chart_height + 12)
-    available_height = max(500, screen_height - 80)
-    width = min(1100, max(700, screen_width - 100))
-    return width, max(500, min(desired_height, available_height)), chart_height
+    """Size a single-tag graph generously while keeping it inside the display."""
+    del tag_count
+    width = min(1800, max(700, screen_width - 60))
+    height = min(850, max(600, screen_height - 80))
+    return width, height, max(420, height - 190)
+
+
+def adjacent_tag_index(current: int, tag_count: int, direction: int) -> int:
+    if tag_count <= 0:
+        return 0
+    return min(tag_count - 1, max(0, current + direction))
+
+
+def local_wall_times(timestamps: list[datetime]) -> list[datetime]:
+    """Keep the local clock values stored in CSV instead of plotting them as UTC."""
+    return [timestamp.replace(tzinfo=None) for timestamp in timestamps]
 
 
 def read_i16(data: bytes, offset: int) -> int:
@@ -619,8 +680,8 @@ class WeatherWindow(tk.Toplevel):
     def __init__(self, parent: tk.Widget, location: WeatherLocation | None = None, city_query: str | None = None) -> None:
         super().__init__(parent)
         self.title("Local Weather")
-        self.geometry("820x650")
-        self.minsize(720, 600)
+        self.geometry("1100x720")
+        self.minsize(900, 620)
         self.configure(bg="#f3f6f1")
         self.result_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.loading = False
@@ -716,30 +777,68 @@ class WeatherWindow(tk.Toplevel):
         self.location_var.set(f"{forecast.location_name}  •  {forecast.latitude:.2f}, {forecast.longitude:.2f}")
         current = forecast.current
         updated = str(current.get("time", "")).replace("T", " ")
+        try:
+            current_time = datetime.fromisoformat(str(current.get("time", "")))
+        except ValueError:
+            current_time = None
         self.updated_var.set(f"Forecast updated {updated} local time • Saved weather location")
         current_card = ttk.Frame(self.content, style="Card.TFrame", padding=18)
         current_card.pack(fill="x", pady=(0, 14))
-        ttk.Label(current_card, text=f"{weather_number(current.get('temperature_2m'), 1)} °C", style="Temperature.TLabel").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 28))
-        ttk.Label(current_card, text=weather_description(current.get("weather_code")), style="Metric.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(current_card, text=weather_symbol(current.get("weather_code")), style="WeatherIcon.TLabel").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
+        ttk.Label(current_card, text=f"{weather_number(current.get('temperature_2m'), 1)} °C", style="Temperature.TLabel").grid(row=0, column=1, rowspan=2, sticky="w", padx=(0, 28))
+        ttk.Label(current_card, text=weather_description(current.get("weather_code")), style="Metric.TLabel").grid(row=0, column=2, sticky="w")
         details = f"Feels like {weather_number(current.get('apparent_temperature'), 1)} °C   •   Humidity {weather_number(current.get('relative_humidity_2m'))}%   •   Wind {weather_number(current.get('wind_speed_10m'), 1)} km/h   •   Precipitation {weather_number(current.get('precipitation'), 1)} mm"
-        ttk.Label(current_card, text=details, style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(5, 0))
+        ttk.Label(current_card, text=details, style="Muted.TLabel").grid(row=1, column=2, sticky="w", pady=(5, 0))
 
-        ttk.Label(self.content, text="7-day forecast", style="Status.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(self.content, text="Hourly forecast", style="Status.TLabel").pack(anchor="w", pady=(0, 6))
         forecast_frame = ttk.Frame(self.content, style="Cards.TFrame")
         forecast_frame.pack(fill="both", expand=True)
-        for index, day in enumerate(forecast.daily):
+        for index, day in enumerate(forecast.daily[:2]):
             try:
-                date_text = datetime.fromisoformat(str(day.get("time", ""))).strftime("%a %d %b")
+                day_date = datetime.fromisoformat(str(day.get("time", "")))
+                date_text = day_date.strftime("%A, %d %B")
             except ValueError:
+                day_date = None
                 date_text = "Date unavailable"
+            heading = "Today" if index == 0 else "Tomorrow"
             card = ttk.Frame(forecast_frame, style="Card.TFrame", padding=12)
-            card.grid(row=index // 4, column=index % 4, sticky="nsew", padx=(0 if index % 4 == 0 else 7, 0), pady=(0, 7))
-            ttk.Label(card, text=date_text, style="SmallValue.TLabel").pack(anchor="w")
-            ttk.Label(card, text=weather_description(day.get("weather_code")), style="Muted.TLabel", wraplength=140).pack(anchor="w", pady=(8, 4))
-            ttk.Label(card, text=f"{weather_number(day.get('temperature_2m_max'))}° / {weather_number(day.get('temperature_2m_min'))}°", style="Metric.TLabel").pack(anchor="w")
-            ttk.Label(card, text=f"Rain {weather_number(day.get('precipitation_probability_max'))}%  •  Wind {weather_number(day.get('wind_speed_10m_max'), 1)} km/h", style="Muted.TLabel", wraplength=140).pack(anchor="w", pady=(5, 0))
-        for column in range(4):
+            card.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 7, 7 if index == 0 else 0))
+            ttk.Label(card, text=f"{weather_symbol(day.get('weather_code'))}  {heading}", style="Metric.TLabel").pack(anchor="w")
+            ttk.Label(card, text=f"{date_text}  •  {weather_number(day.get('temperature_2m_max'))}° / {weather_number(day.get('temperature_2m_min'))}°", style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
+
+            table_area = ttk.Frame(card, style="MetricGroup.TFrame")
+            table_area.pack(fill="both", expand=True)
+            table = ttk.Treeview(table_area, style="Weather.Treeview", columns=("time", "symbol", "condition", "temperature", "rain", "wind"), show="headings", height=14)
+            headings = (("time", "Time", 52), ("symbol", "", 34), ("condition", "Conditions", 145), ("temperature", "Temp", 58), ("rain", "Rain", 50), ("wind", "Wind", 72))
+            for column, label, width in headings:
+                table.heading(column, text=label)
+                table.column(column, width=width, minwidth=width, anchor="center" if column != "condition" else "w", stretch=column == "condition")
+            day_hours = hourly_forecast_for_day(
+                forecast.hourly,
+                day_date,
+                current_time if index == 0 else None,
+            ) if day_date else []
+            for hour in day_hours:
+                timestamp = str(hour.get("time", ""))
+                try:
+                    hour_text = datetime.fromisoformat(timestamp).strftime("%H:%M")
+                except ValueError:
+                    hour_text = "--:--"
+                table.insert("", "end", values=(
+                    hour_text,
+                    weather_symbol(hour.get("weather_code")),
+                    weather_description(hour.get("weather_code")),
+                    f"{weather_number(hour.get('temperature_2m'), 1)}°",
+                    f"{weather_number(hour.get('precipitation_probability'))}%",
+                    f"{weather_number(hour.get('wind_speed_10m'), 1)} km/h",
+                ))
+            scrollbar = ttk.Scrollbar(table_area, orient="vertical", command=table.yview)
+            table.configure(yscrollcommand=scrollbar.set)
+            table.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+        for column in range(2):
             forecast_frame.columnconfigure(column, weight=1)
+        forecast_frame.rowconfigure(0, weight=1)
 
 
 class RuuviTagMonitorApp(tk.Tk):
@@ -785,6 +884,9 @@ class RuuviTagMonitorApp(tk.Tk):
         self.style.configure("Metric.TLabel", background="#ffffff", foreground="#202020", font=("Segoe UI", 16, "bold"))
         self.style.configure("LargeMetric.TLabel", background="#ffffff", foreground="#202020", font=("Segoe UI", 22, "bold"))
         self.style.configure("Temperature.TLabel", background="#ffffff", foreground="#337b2f", font=("Segoe UI", 32, "bold"))
+        self.style.configure("WeatherIcon.TLabel", background="#ffffff", foreground="#e59b18", font=("Segoe UI Symbol", 34))
+        self.style.configure("Weather.Treeview", rowheight=25, font=("Segoe UI", 9))
+        self.style.configure("Weather.Treeview.Heading", font=("Segoe UI", 9, "bold"))
         self.style.configure("SmallValue.TLabel", background="#ffffff", foreground="#202020", font=("Segoe UI", 9))
         self.style.configure("Rssi.TLabel", background="#4d9f38", foreground="#ffffff", font=("Segoe UI", 10))
         self.style.configure("Name.TEntry", font=("Segoe UI", 12, "bold"))
@@ -937,8 +1039,9 @@ class RuuviTagMonitorApp(tk.Tk):
 
         try:
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-            from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+            from matplotlib.dates import ConciseDateFormatter, HourLocator
             from matplotlib.figure import Figure
+            from matplotlib.ticker import MaxNLocator
         except ImportError:
             messagebox.showerror(
                 APP_NAME,
@@ -956,57 +1059,53 @@ class RuuviTagMonitorApp(tk.Tk):
         )
         window.geometry(f"{width}x{height}")
 
-        container = ttk.Frame(window, style="Root.TFrame", padding=(16, 16, 16, 8))
+        container = ttk.Frame(window, style="Root.TFrame", padding=(20, 16, 20, 8))
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(0, weight=1)
-        chart_area = tk.Canvas(container, background="#ffffff", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=chart_area.yview)
-        chart_area.configure(yscrollcommand=scrollbar.set)
-        chart_area.grid(row=0, column=0, sticky="nsew")
-        scrollbar.grid(row=0, column=1, sticky="ns")
+        container.rowconfigure(2, weight=1)
 
-        charts = ttk.Frame(chart_area)
-        chart_window = chart_area.create_window((0, 0), window=charts, anchor="nw")
+        title_var = tk.StringVar()
+        summary_var = tk.StringVar()
+        ttk.Label(container, textvariable=title_var, style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(container, textvariable=summary_var, style="Status.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 10))
 
-        def update_scrollbar() -> None:
-            bounds = chart_area.bbox("all")
-            chart_area.configure(scrollregion=bounds)
-            if bounds and bounds[3] > chart_area.winfo_height():
-                scrollbar.grid()
-            else:
-                scrollbar.grid_remove()
+        figure = Figure(figsize=(10.5, chart_height / 100), dpi=100, facecolor="#ffffff")
+        figure_canvas = FigureCanvasTkAgg(figure, master=container)
+        figure_canvas.get_tk_widget().grid(row=2, column=0, sticky="nsew")
 
-        def charts_resized(_event=None) -> None:
-            chart_area.after_idle(update_scrollbar)
+        footer = ttk.Frame(window, style="Root.TFrame", padding=(20, 8, 20, 16))
+        footer.pack(fill="x")
+        position_var = tk.StringVar()
+        ttk.Label(footer, textvariable=position_var, style="Status.TLabel").pack(side="left", padx=(0, 14))
+        previous_button = ttk.Button(footer, text="← Previous")
+        previous_button.pack(side="left")
+        next_button = ttk.Button(footer, text="Next →")
+        next_button.pack(side="left", padx=(8, 0))
 
-        def viewport_resized(event) -> None:
-            chart_area.itemconfigure(chart_window, width=event.width)
-            chart_area.after_idle(update_scrollbar)
+        current_index = 0
 
-        charts.bind("<Configure>", charts_resized)
-        chart_area.bind("<Configure>", viewport_resized)
-
-        figures: list[Figure] = []
-        for item in series:
-            figure = Figure(figsize=(9.5, chart_height / 100), dpi=100, facecolor="#ffffff")
+        def render_tag(index: int) -> None:
+            nonlocal current_index
+            current_index = adjacent_tag_index(index, len(series), 0)
+            item = series[current_index]
+            plot_times = local_wall_times(item.timestamps)
+            figure.clear()
             axis = figure.add_subplot(111)
             pressure_axis = axis.twinx()
             temperature_line = axis.plot(
-                item.timestamps,
+                plot_times,
                 item.temperatures_c,
                 color="#337b2f",
-                linewidth=2,
+                linewidth=2.3,
                 label="Temperature",
             )[0]
             pressure_line = pressure_axis.plot(
-                item.timestamps,
+                plot_times,
                 item.pressures_hpa,
                 color="#2774b8",
-                linewidth=2,
+                linewidth=2.3,
                 label="Air pressure",
             )[0]
-            axis.set_title(f"{item.display_name}  ({item.mac_address})", loc="left", fontsize=11, fontweight="bold")
             axis.set_ylabel("Temperature (°C)")
             pressure_axis.set_ylabel("Air pressure (hPa)")
             axis.tick_params(axis="y", colors="#337b2f")
@@ -1014,27 +1113,44 @@ class RuuviTagMonitorApp(tk.Tk):
             axis.set_xlabel("Time")
             axis.grid(True, color="#dfe5dc", linewidth=0.8)
             axis.legend(handles=[temperature_line, pressure_line], loc="upper left", frameon=False)
-            locator = AutoDateLocator()
+            axis.margins(x=0.02, y=0.12)
+            pressure_axis.margins(y=0.12)
+            axis.yaxis.set_major_locator(MaxNLocator(nbins=8))
+            pressure_axis.yaxis.set_major_locator(MaxNLocator(nbins=8))
+            locator = HourLocator(byhour=range(0, 24, 2))
             axis.xaxis.set_major_locator(locator)
             axis.xaxis.set_major_formatter(ConciseDateFormatter(locator))
-            figure.tight_layout(pad=1.2)
-            figure_canvas = FigureCanvasTkAgg(figure, master=charts)
+            figure.tight_layout(pad=1.8)
             figure_canvas.draw()
-            figure_canvas.get_tk_widget().pack(fill="x", expand=True, pady=(0, 12))
-            figures.append(figure)
+            latest_time = item.timestamps[-1].strftime("%d %b %Y %H:%M")
+            title_var.set(f"{item.display_name}  ({item.mac_address})")
+            summary_var.set(
+                f"{len(item.timestamps)} readings  •  "
+                f"Temperature {min(item.temperatures_c):.1f}–{max(item.temperatures_c):.1f} °C, latest {item.temperatures_c[-1]:.1f} °C  •  "
+                f"Pressure {min(item.pressures_hpa):.1f}–{max(item.pressures_hpa):.1f} hPa, latest {item.pressures_hpa[-1]:.1f} hPa  •  "
+                f"Updated {latest_time}"
+            )
+            position_var.set(f"Tag {current_index + 1} of {len(series)}")
+            previous_button.configure(state="normal" if current_index > 0 else "disabled")
+            next_button.configure(state="normal" if current_index < len(series) - 1 else "disabled")
 
-        footer = ttk.Frame(window, style="Root.TFrame", padding=(16, 8, 16, 16))
-        footer.pack(fill="x")
+        def move_tag(direction: int) -> None:
+            render_tag(adjacent_tag_index(current_index, len(series), direction))
+
+        previous_button.configure(command=lambda: move_tag(-1))
+        next_button.configure(command=lambda: move_tag(1))
 
         def close_window() -> None:
-            for figure in figures:
-                figure.clear()
+            figure.clear()
             window.destroy()
 
         ttk.Button(footer, text="Close", command=close_window).pack(side="right")
+        window.bind("<Left>", lambda _event: move_tag(-1))
+        window.bind("<Right>", lambda _event: move_tag(1))
         window.protocol("WM_DELETE_WINDOW", close_window)
         window.transient(self)
         window.focus_set()
+        render_tag(0)
 
     def _capture_reading_if_due(self, reading: RuuviReading) -> None:
         config = self.logging_config_for(reading.mac_address)

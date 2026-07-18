@@ -16,8 +16,8 @@ Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements an
 - Each tag can independently log readings to its own CSV file at a configurable capture interval.
 - Data collection settings persist by MAC address in `%LOCALAPPDATA%\RuuviTagMonitor\data-collection.json`; CSV files use the user-defined tag name and capture-start date and are stored in the adjacent `data` folder.
 - A capture session keeps its initial filename across app restarts. Disabling and re-enabling collection starts a new file, with a numeric suffix when the same tag name and date already exist.
-- The Generate graphs command combines valid CSV readings by MAC address and plots temperature (green) and air pressure (blue) on separate Y-axes in each content-aware graph panel, using scrolling only when the content exceeds the available screen height.
-- The Weather command prompts for a city on first use, saves the resolved Open-Meteo location in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`, and offers a Change location action in the forecast window.
+- The Generate graphs command combines valid CSV readings by MAC address and shows one large tag graph at a time, with separate temperature/pressure axes, value summaries, Previous/Next navigation, preserved CSV local time, two-hour ticks, and a nearly full-screen default size.
+- The Weather command prompts for a city on first use, saves the resolved Open-Meteo location in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`, and shows symbol-enhanced hourly forecasts from the current full hour through tomorrow.
 - README screenshots are stored at `docs\ruuvitag-monitor.png` for the live monitor and `docs\ruuvitag-temperature-graphs.png` for the graph window.
 
 ## Build And Run
@@ -33,7 +33,7 @@ Install dependencies with `.\.venv\Scripts\python.exe -m pip install -r requirem
 
 Use `.\build_exe.ps1` to build a PyInstaller executable at `dist\RuuviTagMonitor.exe`.
 
-- Last verified PyInstaller build size: about 44.0 MB (includes Matplotlib and its plotting dependencies).
+- Last verified PyInstaller build size: about 44.0 MB (includes Matplotlib and its plotting dependencies; rebuilt 2026-07-18).
 - Verified launch path: `C:\Coding\RuuviTagMonitor\dist\RuuviTagMonitor.exe`.
 
 ## Notes

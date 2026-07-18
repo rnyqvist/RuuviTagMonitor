@@ -1,9 +1,10 @@
 import csv
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from ruuvitag_monitor.app import CSV_FIELDS, graph_window_layout, load_environment_history
+from ruuvitag_monitor.app import CSV_FIELDS, adjacent_tag_index, graph_window_layout, load_environment_history, local_wall_times
 
 
 class TemperatureHistoryTests(unittest.TestCase):
@@ -61,13 +62,23 @@ class TemperatureHistoryTests(unittest.TestCase):
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].temperatures_c, [21.25])
 
-    def test_graph_window_scales_to_tag_count(self) -> None:
-        self.assertEqual(graph_window_layout(1, 1920, 1080), (1100, 500, 330))
-        self.assertEqual(graph_window_layout(2, 1920, 1080), (1100, 664, 280))
-        self.assertEqual(graph_window_layout(3, 1920, 1080), (1100, 836, 240))
+    def test_graph_window_uses_one_large_chart_for_any_tag_count(self) -> None:
+        self.assertEqual(graph_window_layout(1, 1920, 1080), (1800, 850, 660))
+        self.assertEqual(graph_window_layout(5, 1920, 1080), (1800, 850, 660))
 
-    def test_many_graphs_are_bounded_by_screen_height(self) -> None:
-        self.assertEqual(graph_window_layout(5, 1920, 1080), (1100, 1000, 240))
+    def test_graph_window_is_bounded_on_smaller_displays(self) -> None:
+        self.assertEqual(graph_window_layout(3, 1024, 700), (964, 620, 430))
+
+    def test_tag_navigation_stops_at_first_and_last_tag(self) -> None:
+        self.assertEqual(adjacent_tag_index(0, 3, -1), 0)
+        self.assertEqual(adjacent_tag_index(0, 3, 1), 1)
+        self.assertEqual(adjacent_tag_index(2, 3, 1), 2)
+
+    def test_graph_keeps_csv_local_clock_time(self) -> None:
+        timestamp = datetime.fromisoformat("2026-07-18T20:36:00+03:00")
+        plotted = local_wall_times([timestamp])[0]
+        self.assertEqual(plotted.strftime("%H:%M"), "20:36")
+        self.assertIsNone(plotted.tzinfo)
 
     def _write_csv(self, file_name: str, rows: list[dict[str, object]]) -> None:
         with (self.data_dir / file_name).open("w", encoding="utf-8", newline="") as csv_file:

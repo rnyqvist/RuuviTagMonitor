@@ -41,12 +41,12 @@ python -m venv .venv
 - Set each tag's capture interval from 1 to 86,400 seconds; collection settings persist between runs.
 - Name each CSV from the user-defined tag name and capture-start date, such as `Kitchen_2026-07-10.csv`.
 - Store the CSV files under `%LOCALAPPDATA%\RuuviTagMonitor\data`.
-- Generate scrollable temperature and air-pressure graphs for every tag represented in the data folder.
-- Show current weather and a seven-day forecast for a saved city.
+- View a large temperature and air-pressure graph for one tag at a time, with Previous and Next navigation and a local-time two-hour axis.
+- Show current weather plus hourly forecasts for today and tomorrow for a saved city.
 
 ## Local Weather
 
-Select **Weather** to open current conditions and a seven-day forecast. On first use, enter a city name; the app resolves it with Open-Meteo and remembers the selected location for future runs. Use **Change location** in the Weather window whenever you want to choose another city. The selected location is stored in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`. No API key or Windows location permission is required.
+Select **Weather** to open current conditions and scrollable hourly forecasts for today and tomorrow. Today's list begins at the current full local hour, while tomorrow always shows all 24 hours. Weather symbols make sun, cloud, rain, snow, fog, and thunderstorms easy to spot. On first use, enter a city name; the app resolves it with Open-Meteo and remembers the selected location for future runs. Use **Change location** in the Weather window whenever you want to choose another city. The selected location is stored in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`. No API key or Windows location permission is required.
 
 ## CSV Data Collection
 
@@ -61,7 +61,7 @@ Each row contains the timestamp, MAC address, tag name, temperature, humidity, p
 
 ## Environmental Graphs
 
-Select **Generate graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag, ordered by timestamp, and shown with green temperature and blue air-pressure lines. Separate Y-axes keep both scales readable. The window sizes its height and chart panels to the tag count, and a scrollbar appears only when the content exceeds the available space. Select **Close** to close the graph window.
+Select **Generate graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag and ordered by timestamp. The nearly full-screen window shows one large graph at a time with green temperature and blue air-pressure lines, descriptive axis values, and a summary of the minimum, maximum, and latest readings. CSV local clock times are preserved and the X-axis uses two-hour intervals. Use **Previous** and **Next** (or the left and right arrow keys) to switch tags. Select **Close** to close the graph window.
 
 ![RuuviTag temperature graphs](docs/ruuvitag-temperature-graphs.png)
 
