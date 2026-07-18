@@ -48,6 +48,10 @@ python -m venv .venv
 
 Select **Weather** to open current conditions and scrollable hourly forecasts for today and tomorrow. Today's list begins at the current full local hour, while tomorrow always shows all 24 hours. Weather symbols make sun, cloud, rain, snow, fog, and thunderstorms easy to spot. On first use, enter a city name; the app resolves it with Open-Meteo and remembers the selected location for future runs. Use **Change location** in the Weather window whenever you want to choose another city. The selected location is stored in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`. No API key or Windows location permission is required.
 
+![RuuviTag local weather forecast](docs/ruuvitag-local-weather.png)
+
+*Current conditions and hourly forecasts for today and tomorrow.*
+
 ## CSV Data Collection
 
 1. Give the discovered tag a descriptive name, then press `Enter` or move focus away from the name field.

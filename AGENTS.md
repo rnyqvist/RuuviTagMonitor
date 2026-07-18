@@ -18,7 +18,7 @@ Python/Tkinter desktop app for discovering nearby RuuviTag BLE advertisements an
 - A capture session keeps its initial filename across app restarts. Disabling and re-enabling collection starts a new file, with a numeric suffix when the same tag name and date already exist.
 - The Generate graphs command combines valid CSV readings by MAC address and shows one large tag graph at a time, with separate temperature/pressure axes, value summaries, Previous/Next navigation, preserved CSV local time, two-hour ticks, and a nearly full-screen default size.
 - The Weather command prompts for a city on first use, saves the resolved Open-Meteo location in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`, and shows symbol-enhanced hourly forecasts from the current full hour through tomorrow.
-- README screenshots are stored at `docs\ruuvitag-monitor.png` for the live monitor and `docs\ruuvitag-temperature-graphs.png` for the graph window.
+- README screenshots are stored at `docs\ruuvitag-monitor.png` for the live monitor, `docs\ruuvitag-local-weather.png` for local weather, and `docs\ruuvitag-temperature-graphs.png` for the graph window.
 
 ## Build And Run
 
