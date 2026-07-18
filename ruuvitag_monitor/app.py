@@ -8,11 +8,14 @@ import os
 import queue
 import re
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 try:
     from bleak import BleakScanner
@@ -26,10 +29,23 @@ CARD_WIDTH = 360
 CARD_HEIGHT = 382
 CARD_GAP = 12
 WINDOW_CHROME_X = 56
-WINDOW_CHROME_Y = 128
-EMPTY_SIZE = (800, 400)
+WINDOW_CHROME_Y = 176
+EMPTY_SIZE = (800, 440)
 MIN_SIZE = (760, 400)
 MAX_COLUMNS = 3
+HTTP_TIMEOUT_SECONDS = 10
+
+
+WEATHER_DESCRIPTIONS = {
+    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+    45: "Fog", 48: "Freezing fog", 51: "Light drizzle", 53: "Drizzle",
+    55: "Heavy drizzle", 56: "Light freezing drizzle", 57: "Freezing drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain", 66: "Light freezing rain",
+    67: "Freezing rain", 71: "Light snow", 73: "Snow", 75: "Heavy snow",
+    77: "Snow grains", 80: "Light rain showers", 81: "Rain showers",
+    82: "Heavy rain showers", 85: "Light snow showers", 86: "Heavy snow showers",
+    95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Thunderstorm with heavy hail",
+}
 
 
 @dataclass
@@ -93,6 +109,101 @@ class EnvironmentalSeries:
     pressures_hpa: list[float]
 
 
+@dataclass
+class WeatherForecast:
+    location_name: str
+    latitude: float
+    longitude: float
+    current: dict[str, object]
+    daily: list[dict[str, object]]
+
+
+@dataclass
+class WeatherLocation:
+    name: str
+    latitude: float
+    longitude: float
+
+
+def weather_description(code: object) -> str:
+    try:
+        return WEATHER_DESCRIPTIONS.get(int(code), "Unknown conditions")
+    except (TypeError, ValueError):
+        return "Unknown conditions"
+
+
+def weather_number(value: object, decimals: int = 0, fallback: str = "–") -> str:
+    """Format a weather-service number without letting incomplete data break the UI."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(number):
+        return fallback
+    return f"{number:.{decimals}f}"
+
+
+def _get_json(url: str) -> dict[str, object]:
+    request = urllib.request.Request(url, headers={"User-Agent": "RuuviTagMonitor/1.0"})
+    with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+        data = json.load(response)
+    if not isinstance(data, dict):
+        raise ValueError("The weather service returned an unexpected response.")
+    return data
+
+
+def geocode_city(query: str) -> WeatherLocation:
+    query = query.strip()
+    if len(query) < 2:
+        raise ValueError("Enter a city name with at least two characters.")
+    params = urllib.parse.urlencode({"name": query, "count": 1, "language": "en", "format": "json"})
+    response = _get_json(f"https://geocoding-api.open-meteo.com/v1/search?{params}")
+    results = response.get("results")
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        raise ValueError(f'No location was found for "{query}".')
+    location = results[0]
+    try:
+        latitude = float(location["latitude"])
+        longitude = float(location["longitude"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("The location service returned incomplete coordinates.") from exc
+    if not math.isfinite(latitude) or not math.isfinite(longitude) or not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+        raise ValueError("The location service returned invalid coordinates.")
+
+    city = str(location.get("name") or query).strip()
+    region = str(location.get("admin1") or "").strip()
+    country = str(location.get("country") or "").strip()
+    location_name = ", ".join(part for part in (city, region, country) if part) or f"{latitude:.2f}, {longitude:.2f}"
+    return WeatherLocation(location_name, latitude, longitude)
+
+
+def fetch_local_weather(location: WeatherLocation) -> WeatherForecast:
+    latitude = location.latitude
+    longitude = location.longitude
+    params = urllib.parse.urlencode(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,precipitation",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
+            "timezone": "auto",
+            "forecast_days": 7,
+        }
+    )
+    forecast = _get_json(f"https://api.open-meteo.com/v1/forecast?{params}")
+    current = forecast.get("current")
+    daily_values = forecast.get("daily")
+    if not isinstance(current, dict) or not isinstance(daily_values, dict):
+        raise ValueError("The weather service returned incomplete forecast data.")
+    dates = daily_values.get("time")
+    if not isinstance(dates, list) or not dates:
+        raise ValueError("The weather service returned incomplete forecast data.")
+    daily = []
+    for index, date in enumerate(dates):
+        daily.append({key: value[index] for key, value in daily_values.items() if isinstance(value, list) and index < len(value)} | {"time": date})
+    return WeatherForecast(location.name, latitude, longitude, current, daily)
+
+
 def settings_path() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     if base:
@@ -106,6 +217,27 @@ def app_data_path() -> Path:
 
 def logging_settings_path() -> Path:
     return app_data_path() / "data-collection.json"
+
+
+def weather_location_path() -> Path:
+    return app_data_path() / "weather-location.json"
+
+
+def load_weather_location() -> WeatherLocation | None:
+    try:
+        data = json.loads(weather_location_path().read_text(encoding="utf-8"))
+        location = WeatherLocation(str(data["name"]), float(data["latitude"]), float(data["longitude"]))
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not math.isfinite(location.latitude) or not math.isfinite(location.longitude):
+        return None
+    return location
+
+
+def save_weather_location(location: WeatherLocation) -> None:
+    path = weather_location_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(location.__dict__, indent=2), encoding="utf-8")
 
 
 def data_directory() -> Path:
@@ -483,9 +615,137 @@ class SensorCard(ttk.Frame):
         self.last_seen_var.set(reading.last_seen_text)
 
 
+class WeatherWindow(tk.Toplevel):
+    def __init__(self, parent: tk.Widget, location: WeatherLocation | None = None, city_query: str | None = None) -> None:
+        super().__init__(parent)
+        self.title("Local Weather")
+        self.geometry("820x650")
+        self.minsize(720, 600)
+        self.configure(bg="#f3f6f1")
+        self.result_queue: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.loading = False
+        self.closed = False
+        self.location = location
+        self.city_query = city_query
+
+        root = ttk.Frame(self, style="Root.TFrame", padding=20)
+        root.pack(fill="both", expand=True)
+        header = ttk.Frame(root, style="Toolbar.TFrame")
+        header.pack(fill="x")
+        ttk.Label(header, text="Local Weather", style="Title.TLabel").pack(side="left")
+        self.refresh_button = ttk.Button(header, text="Refresh", command=self.refresh)
+        self.refresh_button.pack(side="right")
+        self.change_location_button = ttk.Button(header, text="Change location", command=self.change_location)
+        self.change_location_button.pack(side="right", padx=(0, 8))
+        self.location_var = tk.StringVar(value="Finding location…")
+        self.updated_var = tk.StringVar(value="")
+        ttk.Label(root, textvariable=self.location_var, style="Status.TLabel").pack(anchor="w", pady=(5, 0))
+        ttk.Label(root, textvariable=self.updated_var, style="Status.TLabel").pack(anchor="w")
+        self.content = ttk.Frame(root, style="Cards.TFrame")
+        self.content.pack(fill="both", expand=True, pady=(18, 0))
+        self.status = ttk.Label(self.content, text="Loading current weather and forecast…", style="Status.TLabel")
+        self.status.pack(expand=True)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.focus_set()
+        self.refresh()
+
+    def close(self) -> None:
+        self.closed = True
+        self.destroy()
+
+    def refresh(self) -> None:
+        if self.loading:
+            return
+        self.loading = True
+        self.refresh_button.configure(state="disabled")
+        self.change_location_button.configure(state="disabled")
+        self.location_var.set("Finding location…" if self.city_query else f"Loading weather for {self.location.name}…")
+        self.updated_var.set("")
+        for child in self.content.winfo_children():
+            child.destroy()
+        self.status = ttk.Label(self.content, text="Loading current weather and forecast…", style="Status.TLabel")
+        self.status.pack(expand=True)
+        threading.Thread(target=self._load, daemon=True).start()
+        self.after(100, self._check_result)
+
+    def _load(self) -> None:
+        try:
+            location = geocode_city(self.city_query) if self.city_query else self.location
+            if location is None:
+                raise ValueError("Choose a city before loading weather data.")
+            forecast = fetch_local_weather(location)
+            self.result_queue.put(("success", (location, forecast)))
+        except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            self.result_queue.put(("error", str(exc)))
+
+    def _check_result(self) -> None:
+        if self.closed:
+            return
+        try:
+            outcome, payload = self.result_queue.get_nowait()
+        except queue.Empty:
+            self.after(100, self._check_result)
+            return
+        self.loading = False
+        self.refresh_button.configure(state="normal")
+        self.change_location_button.configure(state="normal")
+        if outcome == "error":
+            self.status.configure(text=f"Weather data could not be loaded.\n\n{payload}\n\nCheck the internet connection and try Refresh.", justify="center")
+            self.location_var.set("Location unavailable")
+        else:
+            location, forecast = payload
+            self.location = location
+            self.city_query = None
+            save_weather_location(location)
+            self._render(forecast)
+
+    def change_location(self) -> None:
+        query = simpledialog.askstring(
+            "Weather location",
+            "Enter the city name for the weather forecast:",
+            parent=self,
+        )
+        if query and query.strip():
+            self.city_query = query.strip()
+            self.refresh()
+
+    def _render(self, forecast: WeatherForecast) -> None:
+        for child in self.content.winfo_children():
+            child.destroy()
+        self.location_var.set(f"{forecast.location_name}  •  {forecast.latitude:.2f}, {forecast.longitude:.2f}")
+        current = forecast.current
+        updated = str(current.get("time", "")).replace("T", " ")
+        self.updated_var.set(f"Forecast updated {updated} local time • Saved weather location")
+        current_card = ttk.Frame(self.content, style="Card.TFrame", padding=18)
+        current_card.pack(fill="x", pady=(0, 14))
+        ttk.Label(current_card, text=f"{weather_number(current.get('temperature_2m'), 1)} °C", style="Temperature.TLabel").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 28))
+        ttk.Label(current_card, text=weather_description(current.get("weather_code")), style="Metric.TLabel").grid(row=0, column=1, sticky="w")
+        details = f"Feels like {weather_number(current.get('apparent_temperature'), 1)} °C   •   Humidity {weather_number(current.get('relative_humidity_2m'))}%   •   Wind {weather_number(current.get('wind_speed_10m'), 1)} km/h   •   Precipitation {weather_number(current.get('precipitation'), 1)} mm"
+        ttk.Label(current_card, text=details, style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(5, 0))
+
+        ttk.Label(self.content, text="7-day forecast", style="Status.TLabel").pack(anchor="w", pady=(0, 6))
+        forecast_frame = ttk.Frame(self.content, style="Cards.TFrame")
+        forecast_frame.pack(fill="both", expand=True)
+        for index, day in enumerate(forecast.daily):
+            try:
+                date_text = datetime.fromisoformat(str(day.get("time", ""))).strftime("%a %d %b")
+            except ValueError:
+                date_text = "Date unavailable"
+            card = ttk.Frame(forecast_frame, style="Card.TFrame", padding=12)
+            card.grid(row=index // 4, column=index % 4, sticky="nsew", padx=(0 if index % 4 == 0 else 7, 0), pady=(0, 7))
+            ttk.Label(card, text=date_text, style="SmallValue.TLabel").pack(anchor="w")
+            ttk.Label(card, text=weather_description(day.get("weather_code")), style="Muted.TLabel", wraplength=140).pack(anchor="w", pady=(8, 4))
+            ttk.Label(card, text=f"{weather_number(day.get('temperature_2m_max'))}° / {weather_number(day.get('temperature_2m_min'))}°", style="Metric.TLabel").pack(anchor="w")
+            ttk.Label(card, text=f"Rain {weather_number(day.get('precipitation_probability_max'))}%  •  Wind {weather_number(day.get('wind_speed_10m_max'), 1)} km/h", style="Muted.TLabel", wraplength=140).pack(anchor="w", pady=(5, 0))
+        for column in range(4):
+            forecast_frame.columnconfigure(column, weight=1)
+
+
 class RuuviTagMonitorApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        self.weather_window: WeatherWindow | None = None
         self.title(APP_NAME)
         self.minsize(*MIN_SIZE)
         self.configure(bg="#f3f6f1")
@@ -544,7 +804,7 @@ class RuuviTagMonitorApp(tk.Tk):
         ttk.Label(title_area, textvariable=self.status_var, style="Status.TLabel").pack(anchor="w", pady=(2, 0))
 
         button_area = ttk.Frame(toolbar, style="Toolbar.TFrame")
-        button_area.grid(row=0, column=1, sticky="e")
+        button_area.grid(row=1, column=0, sticky="w", pady=(14, 0))
         self.start_button = ttk.Button(button_area, textvariable=self.start_text, command=self.start_scan, style="Accent.TButton")
         self.start_button.pack(side="left", padx=(0, 8))
         self.stop_button = ttk.Button(button_area, text="Stop", command=self.stop_scan, state="disabled")
@@ -554,6 +814,7 @@ class RuuviTagMonitorApp(tk.Tk):
             side="left", padx=(8, 0)
         )
         ttk.Button(button_area, text="Open data folder", command=self.open_data_folder).pack(side="left", padx=(8, 0))
+        ttk.Button(button_area, text="Weather", command=self.show_weather).pack(side="left", padx=(8, 0))
 
         self.cards_frame = ttk.Frame(root, style="Cards.TFrame")
         self.cards_frame.pack(fill="both", expand=True, pady=(22, 0))
@@ -644,6 +905,25 @@ class RuuviTagMonitorApp(tk.Tk):
             os.startfile(path)  # type: ignore[attr-defined]
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"Could not open the data folder:\n{exc}")
+
+    def show_weather(self) -> None:
+        if self.weather_window is not None and self.weather_window.winfo_exists():
+            self.weather_window.deiconify()
+            self.weather_window.lift()
+            self.weather_window.focus_set()
+            return
+        location = load_weather_location()
+        city_query = None
+        if location is None:
+            city_query = simpledialog.askstring(
+                "Weather location",
+                "Enter the city name for the weather forecast:",
+                parent=self,
+            )
+            if not city_query or not city_query.strip():
+                return
+            city_query = city_query.strip()
+        self.weather_window = WeatherWindow(self, location=location, city_query=city_query)
 
     def show_environment_graphs(self) -> None:
         series = load_environment_history(data_directory())

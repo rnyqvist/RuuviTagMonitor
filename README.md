@@ -42,6 +42,11 @@ python -m venv .venv
 - Name each CSV from the user-defined tag name and capture-start date, such as `Kitchen_2026-07-10.csv`.
 - Store the CSV files under `%LOCALAPPDATA%\RuuviTagMonitor\data`.
 - Generate scrollable temperature and air-pressure graphs for every tag represented in the data folder.
+- Show current weather and a seven-day forecast for a saved city.
+
+## Local Weather
+
+Select **Weather** to open current conditions and a seven-day forecast. On first use, enter a city name; the app resolves it with Open-Meteo and remembers the selected location for future runs. Use **Change location** in the Weather window whenever you want to choose another city. The selected location is stored in `%LOCALAPPDATA%\RuuviTagMonitor\weather-location.json`. No API key or Windows location permission is required.
 
 ## CSV Data Collection
 
