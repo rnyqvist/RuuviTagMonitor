@@ -46,6 +46,21 @@ class TemperatureHistoryTests(unittest.TestCase):
 
         self.assertEqual([item.display_name for item in history], ["Kitchen", "Sauna"])
 
+    def test_limits_each_tag_to_the_latest_five_days(self) -> None:
+        self._write_csv(
+            "Kitchen.csv",
+            [
+                self._row("2026-07-10T11:59:59+03:00", "19", "AA:01", "Kitchen"),
+                self._row("2026-07-10T12:00:00+03:00", "20", "AA:01", "Kitchen"),
+                self._row("2026-07-15T12:00:00+03:00", "21", "AA:01", "Kitchen"),
+            ],
+        )
+
+        history = load_environment_history(self.data_dir)
+
+        self.assertEqual(history[0].temperatures_c, [20, 21])
+        self.assertEqual(len(history[0].timestamps), 2)
+
     def test_skips_invalid_rows_and_unreadable_csv_content(self) -> None:
         self._write_csv(
             "mixed.csv",

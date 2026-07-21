@@ -41,7 +41,7 @@ python -m venv .venv
 - Set each tag's capture interval from 1 to 86,400 seconds; collection settings persist between runs.
 - Name each CSV from the user-defined tag name and capture-start date, such as `Kitchen_2026-07-10.csv`.
 - Store the CSV files under `%LOCALAPPDATA%\RuuviTagMonitor\data`.
-- View a large temperature and air-pressure graph for one tag at a time, with Previous and Next navigation and a local-time two-hour axis.
+- View a large temperature and air-pressure graph for one tag at a time, with Previous and Next navigation and an adaptive local-time axis.
 - Show current weather plus hourly forecasts for today and tomorrow for a saved city.
 
 ## Local Weather
@@ -65,7 +65,7 @@ Each row contains the timestamp, MAC address, tag name, temperature, humidity, p
 
 ## Environmental Graphs
 
-Select **Generate graphs** to read all CSV files from the data folder. Readings from separate capture sessions are combined by tag and ordered by timestamp. The nearly full-screen window shows one large graph at a time with green temperature and blue air-pressure lines, descriptive axis values, and a summary of the minimum, maximum, and latest readings. CSV local clock times are preserved and the X-axis uses two-hour intervals. Use **Previous** and **Next** (or the left and right arrow keys) to switch tags. Select **Close** to close the graph window.
+Select **Generate graphs** to read CSV files from the data folder. Readings from separate capture sessions are combined by tag and ordered by timestamp, and each graph is limited to the five days ending at that tag's latest reading. The nearly full-screen window shows one large graph at a time with green temperature and blue air-pressure lines, descriptive axis values, and a summary of the minimum, maximum, and latest readings. CSV local clock times are preserved, while the X-axis automatically adjusts its tick intervals to keep labels readable. Use **Previous** and **Next** (or the left and right arrow keys) to switch tags. Select **Close** to close the graph window.
 
 ![RuuviTag temperature graphs](docs/ruuvitag-temperature-graphs.png)
 

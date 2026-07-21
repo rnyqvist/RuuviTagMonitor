@@ -34,6 +34,7 @@ EMPTY_SIZE = (800, 440)
 MIN_SIZE = (760, 400)
 MAX_COLUMNS = 3
 HTTP_TIMEOUT_SECONDS = 10
+ENVIRONMENT_HISTORY_DAYS = 5
 
 
 WEATHER_DESCRIPTIONS = {
@@ -450,6 +451,8 @@ def load_environment_history(path: Path) -> list[EnvironmentalSeries]:
     series: list[EnvironmentalSeries] = []
     for mac_address, points in points_by_tag.items():
         points.sort(key=lambda point: point[0].timestamp())
+        cutoff = points[-1][0].timestamp() - (ENVIRONMENT_HISTORY_DAYS * 24 * 60 * 60)
+        points = [point for point in points if point[0].timestamp() >= cutoff]
         series.append(
             EnvironmentalSeries(
                 mac_address=mac_address,
@@ -1039,7 +1042,7 @@ class RuuviTagMonitorApp(tk.Tk):
 
         try:
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-            from matplotlib.dates import ConciseDateFormatter, HourLocator
+            from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
             from matplotlib.figure import Figure
             from matplotlib.ticker import MaxNLocator
         except ImportError:
@@ -1117,7 +1120,7 @@ class RuuviTagMonitorApp(tk.Tk):
             pressure_axis.margins(y=0.12)
             axis.yaxis.set_major_locator(MaxNLocator(nbins=8))
             pressure_axis.yaxis.set_major_locator(MaxNLocator(nbins=8))
-            locator = HourLocator(byhour=range(0, 24, 2))
+            locator = AutoDateLocator(minticks=5, maxticks=10, interval_multiples=True)
             axis.xaxis.set_major_locator(locator)
             axis.xaxis.set_major_formatter(ConciseDateFormatter(locator))
             figure.tight_layout(pad=1.8)
