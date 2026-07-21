@@ -16,6 +16,8 @@ Python based MS Windows desktop app for discovering nearby RuuviTag BLE advertis
 
 ## Run
 
+Just use the .exe from the dist folder, or:
+
 ```powershell
 cd C:\Coding\RuuviTagMonitor
 .\.venv\Scripts\pythonw.exe main.py
